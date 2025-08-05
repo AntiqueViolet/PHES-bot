@@ -2,7 +2,7 @@ name: Docker Publish
 
 on:
   push:
-    branches: ["main"]
+    branches: ["master"]
 
 jobs:
   build-and-push:
@@ -43,7 +43,7 @@ jobs:
             ${{ secrets.DOCKER_USERNAME }}/phbot
             ghcr.io/${{ github.repository }}
           tags: |
-            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'main') }}
+            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'master') }}
 
       - name: Build and Push
         uses: docker/build-push-action@v5
