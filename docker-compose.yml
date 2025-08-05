@@ -1,0 +1,11 @@
+version: "3.9"
+
+services:
+  phbot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: phbot
+    restart: unless-stopped
+    env_file:
+      - .env
