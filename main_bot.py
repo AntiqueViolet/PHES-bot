@@ -29,6 +29,9 @@ DB_CONFIG = {
 
 API_TOKEN = os.getenv('API_TOKEN')
 
+ADMIN_ID_1=os.getenv('ADMIN_ID_1')
+ADMIN_ID_2=os.getenv('ADMIN_ID_2')
+
 bot = Bot(token=API_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
@@ -595,7 +598,7 @@ async def send_order_to_ph(order_id, description, photos):
 
 @dp.message(Command("rep"))
 async def generate_report(message: types.Message):
-    if message.from_user.id != 366532391 and message.from_user.id != 512471110: # type: ignore
+    if message.from_user.id != ADMIN_ID_1 and message.from_user.id != ADMIN_ID_2: # type: ignore
         await message.answer("❌ Доступ запрещен!")
         return
 
@@ -698,7 +701,7 @@ async def generate_report(message: types.Message):
 
 @dp.message(Command("repexp"))
 async def generate_report2(message: types.Message):
-    if message.from_user.id != 366532391 and message.from_user.id != 512471110: # type: ignore
+    if message.from_user.id != ADMIN_ID_1 and message.from_user.id != ADMIN_ID_2: # type: ignore
         await message.answer("❌ Доступ запрещен!")
         return
     
