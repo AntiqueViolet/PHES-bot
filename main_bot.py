@@ -11,10 +11,9 @@ from aiogram.types import InputFile
 from aiogram import F
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton
 from aiogram import Router
-from datetime import datetime
+from datetime import datetime, timedelta
 import pandas as pd
 from io import BytesIO
-from sqlalchemy import create_engine
 import os
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from dotenv import load_dotenv
