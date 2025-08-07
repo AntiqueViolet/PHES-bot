@@ -60,6 +60,19 @@ class RevisionStates(StatesGroup):
     revision_photos = State()
     revision_awaiting = State()
 
+async def safe_edit_message_text(chat_id, message_id, text, reply_markup=None):
+    try:
+        await bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=text,
+            reply_markup=reply_markup
+        )
+        await asyncio.sleep(0.05)
+    except Exception as e:
+        logging.error(f"Ошибка обновления сообщения {message_id}: {e}")
+
+
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     keyboard = types.ReplyKeyboardMarkup(
@@ -120,9 +133,11 @@ async def confirm_cancel_order(callback: types.CallbackQuery):
         [InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"confirm_cancel_{order_id}")],
         [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_action")]
     ])
-    
-    await callback.message.edit_text(
-        f"Вы уверены, что хотите отменить заявку #{order_id}?",
+
+    await safe_edit_message_text(
+        chat_id=callback.message.chat.id,
+        message_id=callback.message.message_id,
+        text=f"Вы уверены, что хотите отменить заявку #{order_id}?",
         reply_markup=confirm_keyboard
     )
 
@@ -152,19 +167,22 @@ async def process_cancel_order(callback: types.CallbackQuery):
             
             for ph_id, message_id in messages:
                 try:
-                    await bot.edit_message_text(
+                    await safe_edit_message_text(
                         chat_id=ph_id,
                         message_id=message_id,
-                        text=f"🚫 Заявка #{order_id} отменена экспертом",
-                        reply_markup=None
+                        text=f"🚫 Заявка #{order_id} отменена экспертом"
                     )
                 except Exception as e:
                     logging.error(f"Ошибка обновления сообщения: {e}")
 
             connection.commit()
-            
-            await callback.message.edit_text(f"✅ Заявка #{order_id} успешно отменена!")
-            
+
+            await safe_edit_message_text(
+                chat_id=callback.message.chat.id,
+                message_id=callback.message.message_id,
+                text=f"✅ Заявка #{order_id} успешно отменена!"
+            )
+
     except Exception as e:
         logging.error(f"Ошибка отмены заявки: {e}")
         await callback.message.edit_text("⚠️ Ошибка при отмене заявки")
@@ -173,7 +191,11 @@ async def process_cancel_order(callback: types.CallbackQuery):
 
 @dp.callback_query(lambda c: c.data == "cancel_action")
 async def cancel_action(callback: types.CallbackQuery):
-    await callback.message.edit_text("❌ Действие отменено")
+    await safe_edit_message_text(
+        chat_id=callback.message.chat.id,
+        message_id=callback.message.message_id,
+        text="❌ Действие отменено"
+    )
 
 @dp.message(lambda message: message.text == "🌛 Войти в систему")
 async def login_start(message: types.Message, state: FSMContext):
@@ -423,12 +445,11 @@ async def take_order(callback: types.CallbackQuery, state: FSMContext):
                 
                 if target_ph_id == ph_id:
                     new_text += "\n\n✅ Вы взяли эту заявку!"
-                
-                await bot.edit_message_text(
+
+                await safe_edit_message_text(
                     chat_id=callback.from_user.id,
                     message_id=message_id,
-                    text=new_text,
-                    reply_markup=None
+                    text=new_text
                 )
             except Exception as e:
                 logging.error(f"Ошибка обновления сообщения {message_id}: {e}")
@@ -518,12 +539,12 @@ async def finish_photos_upload(message: types.Message, state: FSMContext):
         for target_ph_id, message_id in all_messages:
             try:
                 new_text = f"📄 Заявка #{order_id}\nОписание: {description}\nСтатус: Выполнена"
-                await bot.edit_message_text(
+                await safe_edit_message_text(
                     chat_id=target_ph_id,
                     message_id=message_id,
-                    text=new_text,
-                    reply_markup=None
+                    text=new_text
                 )
+
             except Exception as e:
                 logging.error(f"Ошибка обновления сообщения {message_id}: {e}")
 
@@ -939,9 +960,13 @@ async def accept_revision(callback: types.CallbackQuery):
             (order_id,)
         )
         connection.commit()
-        
-        await callback.message.edit_text(f"✅ Заявка #{order_id} принята!")
-        
+
+        await safe_edit_message_text(
+            chat_id=callback.message.chat.id,
+            message_id=callback.message.message_id,
+            text=f"✅ Заявка #{order_id} принята!"
+        )
+
     except Exception as e:
         logging.error(f"Ошибка при принятии заявки: {e}")
         await callback.answer("❌ Ошибка!")
