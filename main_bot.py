@@ -633,79 +633,80 @@ async def send_order_to_ph(order_id, description, photos):
 
 @dp.message(Command("rep"))
 async def generate_report(message: types.Message):
-    if message.from_user.id != ADMIN_ID_1 and message.from_user.id != ADMIN_ID_2:  # type: ignore
-        await message.answer("❌ Доступ запрещен!")
-        return
+    # if message.from_user.id != ADMIN_ID_1 and message.from_user.id != ADMIN_ID_2:  # type: ignore
+    #     await message.answer("❌ Доступ запрещен!")
+    #     return
+    #     коммент до выяснения обстоятельств((
 
     file_name = None
     try:
         connection = pymysql.connect(**DB_CONFIG)  # type: ignore
 
         experts_query = """
-                        SELECT ue.id, \
-                               ue.name, \
-                               ue.surname, \
-                               ue.adress_oto, \
+                        SELECT ue.id, 
+                               ue.name, 
+                               ue.surname, 
+                               ue.adress_oto, 
                                DATE_FORMAT(o.created_at, '%Y-%m') as month,
                 COUNT(o.id) as total_orders,
                 ph.order_price * SUM(o.result_photo) as total_amount,
                 ue.tg_id as TelegramId
                         FROM orders o
-                            JOIN users_expert ue \
+                            JOIN users_expert ue 
                         ON o.expert_id = ue.id
                             JOIN users_ph ph ON o.ph_id = ph.id
                         WHERE o.status = 'Завершено'
                         GROUP BY ue.id, month
-                        ORDER BY ue.id, month \
+                        ORDER BY ue.id, month 
                         """
         experts_df = pd.read_sql(experts_query, connection)  # type: ignore
 
         ph_query = """
-                   SELECT ph.id, \
-                          ph.name, \
+                   SELECT ph.id, 
+                          ph.name, 
                           DATE_FORMAT(o.created_at, '%Y-%m') as month,
                 COUNT(o.id) as total_orders,
                 ph.order_price * SUM(o.result_photo) as total_amount
                    FROM orders o
-                       JOIN users_ph ph \
+                       JOIN users_ph ph 
                    ON o.ph_id = ph.id
                    WHERE o.status = 'Завершено'
                    GROUP BY ph.id, month
-                   ORDER BY ph.id, month \
+                   ORDER BY ph.id, month 
                    """
         ph_df = pd.read_sql(ph_query, connection)  # type: ignore
 
         experts_query2 = """
-                         SELECT ue.id, \
-                                ue.name, \
-                                ue.surname, \
-                                ue.adress_oto, \
+                         SELECT ue.id, 
+                                ue.name, 
+                                ue.surname, 
+                                ue.adress_oto, 
                                 DATE_FORMAT(o.created_at, '%Y-%m-%d') as DAY,
                 COUNT(o.id) as total_orders,
                 ph.order_price * SUM(o.result_photo) as total_amount,
                 ue.tg_id as TelegramId
                          FROM orders o
-                             JOIN users_expert ue \
+                             JOIN users_expert ue 
                          ON o.expert_id = ue.id
                              JOIN users_ph ph ON o.ph_id = ph.id
                          WHERE o.status = 'Завершено'
                          GROUP BY ue.id, DAY
-                         ORDER BY ue.id, DAY \
+                         ORDER BY ue.id, DAY 
                          """
         experts_df2 = pd.read_sql(experts_query2, connection)  # type: ignore
 
         ph_query2 = """
-                    SELECT ph.id, \
-                           ph.name, \
+                    SELECT ph.id, 
+                           ph.name, 
                            DATE_FORMAT(o.created_at, '%Y-%m-%d') as DAY,
                 COUNT(o.id) as total_orders,
                 ph.order_price * SUM(o.result_photo) as total_amount
                     FROM orders o
-                        JOIN users_ph ph \
+                        JOIN users_ph ph 
                     ON o.ph_id = ph.id
                     WHERE o.status = 'Завершено'
                     GROUP BY ph.id, DAY
-                    ORDER BY ph.id, DAY \
+                    ORDER BY ph.id, DAY 
                     """
         ph_df2 = pd.read_sql(ph_query2, connection)  # type: ignore
 
