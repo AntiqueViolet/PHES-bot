@@ -1235,7 +1235,7 @@ async def show_ph_statistics(message: types.Message):
         order_price = result[0]
 
         cursor.execute("""
-            SELECT COUNT(result_photo) FROM orders
+            SELECT SUM(result_photo) FROM orders
             WHERE ph_id = %s AND status = 'Завершено'
         """, (ph_id,))
         completed_count = cursor.fetchone()[0]
@@ -1261,7 +1261,7 @@ async def show_ph_statistics(message: types.Message):
         today_start = datetime.combine(date.today(), datetime.min.time())
         today_end = datetime.combine(date.today(), datetime.max.time())
         cursor.execute("""
-            SELECT COUNT(result_photo) FROM orders
+            SELECT SUM(result_photo) FROM orders
             WHERE ph_id = %s AND status = 'Завершено'
             AND created_at >= %s AND created_at <= %s
         """, (ph_id, today_start, today_end))
