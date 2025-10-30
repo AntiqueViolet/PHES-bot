@@ -1046,7 +1046,10 @@ async def activate_revision_state(callback: types.CallbackQuery, state: FSMConte
                 "✅ Готово! Теперь вы можете отправлять фотографии доработки.\n\n"
                 "Отправьте до трёх фотографий с исправлениями:",
                 reply_markup=ReplyKeyboardMarkup(
-                    keyboard=[[KeyboardButton(text="Завершить отправку фото")]],
+                    keyboard=[
+                        [KeyboardButton(text="Завершить отправку фото")],
+                        [KeyboardButton(text="❌ Отменить доработку")]
+                    ],
                     resize_keyboard=True
                 )
             )
@@ -1289,6 +1292,38 @@ async def show_ph_statistics(message: types.Message):
             connection.close()
         if 'cursor' in locals() and cursor:
             cursor.close()
+
+
+@dp.message(RevisionStates.revision_photos, F.text == "❌ Отменить доработку")
+async def cancel_revision(message: types.Message, state: FSMContext):
+    user_data = await state.get_data()
+    order_id = user_data.get('order_id')
+
+    logging.info(f"PH {message.from_user.id} cancelled revision for order #{order_id}")
+
+    try:
+        connection = pymysql.connect(**DB_CONFIG)
+        cursor = connection.cursor()
+
+        cursor.execute(
+            "DELETE FROM revision_states WHERE order_id = %s",
+            (order_id,)
+        )
+
+        connection.commit()
+
+        await message.answer(
+            "❌ Доработка отменена. Вы можете вернуться к ней позже через уведомление от эксперта.",
+            reply_markup=ReplyKeyboardRemove()
+        )
+
+    except Exception as e:
+        logging.error(f"Ошибка при отмене доработки: {e}")
+        await message.answer("❌ Произошла ошибка при отмене доработки")
+    finally:
+        cursor.close()
+        connection.close()
+        await state.clear()
 
 async def main():
     asyncio.create_task(check_pending_orders())
