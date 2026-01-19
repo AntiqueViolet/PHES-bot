@@ -1220,12 +1220,14 @@ async def send_reminder_to_ph(order_id, description):
         cursor.close()
         connection.close()
 
+
 @dp.message(F.text == "Моя статистика")
 async def show_ph_statistics(message: types.Message):
     ph_id = await get_ph_id(message.from_user.id)
     if not ph_id:
         await message.answer("❌ Вы не зарегистрированы как исполнитель!")
         return
+
     try:
         connection = pymysql.connect(**DB_CONFIG)
         cursor = connection.cursor()
@@ -1237,38 +1239,56 @@ async def show_ph_statistics(message: types.Message):
             return
         order_price = result[0]
 
+        # Получаем все значения и обрабатываем None
         cursor.execute("""
-            SELECT SUM(result_photo) FROM orders
-            WHERE ph_id = %s AND status = 'Завершено'
-        """, (ph_id,))
-        completed_count = cursor.fetchone()[0]
+                       SELECT SUM(result_photo)
+                       FROM orders
+                       WHERE ph_id = %s
+                         AND status = 'Завершено'
+                       """, (ph_id,))
+        completed_count_result = cursor.fetchone()
+        completed_count = completed_count_result[0] or 0  # Преобразуем None в 0
 
         cursor.execute("""
-            SELECT COUNT(*) FROM orders
-            WHERE ph_id = %s AND status = 'На доработке'
-        """, (ph_id,))
-        revision_requested_count = cursor.fetchone()[0]
+                       SELECT COUNT(*)
+                       FROM orders
+                       WHERE ph_id = %s
+                         AND status = 'На доработке'
+                       """, (ph_id,))
+        revision_requested_count_result = cursor.fetchone()
+        revision_requested_count = revision_requested_count_result[0] or 0
 
         cursor.execute("""
-            SELECT COUNT(*) FROM orders
-            WHERE ph_id = %s AND status = 'В работе'
-        """, (ph_id,))
-        in_progress_count = cursor.fetchone()[0]
+                       SELECT COUNT(*)
+                       FROM orders
+                       WHERE ph_id = %s
+                         AND status = 'В работе'
+                       """, (ph_id,))
+        in_progress_count_result = cursor.fetchone()
+        in_progress_count = in_progress_count_result[0] or 0
 
         cursor.execute("""
-            SELECT COUNT(*) FROM orders
-            WHERE ph_id = %s AND status = 'Ожидает проверки'
-        """, (ph_id,))
-        revision_pending_approval_count = cursor.fetchone()[0]
+                       SELECT COUNT(*)
+                       FROM orders
+                       WHERE ph_id = %s
+                         AND status = 'Ожидает проверки'
+                       """, (ph_id,))
+        revision_pending_approval_count_result = cursor.fetchone()
+        revision_pending_approval_count = revision_pending_approval_count_result[0] or 0
 
         today_start = datetime.combine(date.today(), datetime.min.time())
         today_end = datetime.combine(date.today(), datetime.max.time())
+
         cursor.execute("""
-            SELECT SUM(result_photo) FROM orders
-            WHERE ph_id = %s AND status = 'Завершено'
-            AND created_at >= %s AND created_at <= %s
-        """, (ph_id, today_start, today_end))
-        completed_today_count = cursor.fetchone()[0]
+                       SELECT SUM(result_photo)
+                       FROM orders
+                       WHERE ph_id = %s
+                         AND status = 'Завершено'
+                         AND created_at >= %s
+                         AND created_at <= %s
+                       """, (ph_id, today_start, today_end))
+        completed_today_count_result = cursor.fetchone()
+        completed_today_count = completed_today_count_result[0] or 0
 
         earnings_today = completed_today_count * order_price
 
@@ -1288,10 +1308,13 @@ async def show_ph_statistics(message: types.Message):
         logging.error(f"Ошибка получения статистики исполнителя: {e}")
         await message.answer("❌ Произошла ошибка при получении статистики.")
     finally:
-        if 'connection' in locals() and connection:
-            connection.close()
-        if 'cursor' in locals() and cursor:
-            cursor.close()
+        try:
+            if 'cursor' in locals() and cursor:
+                cursor.close()
+            if 'connection' in locals() and connection:
+                connection.close()
+        except Exception:
+            pass
 
 
 @dp.message(RevisionStates.revision_photos, F.text == "❌ Отменить доработку")
