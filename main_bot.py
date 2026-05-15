@@ -44,8 +44,6 @@ dp.include_router(ph_router)
 
 logging.basicConfig(level=logging.INFO)
 
-sent_reminders = {}
-
 
 class CompleteOrderStates(StatesGroup):
     result_photos = State()
@@ -1387,67 +1385,6 @@ async def process_decline_reason(message: types.Message, state: FSMContext):
         await state.clear()
 
 
-async def check_pending_orders():
-    while True:
-        await asyncio.sleep(60)
-        try:
-            connection = pymysql.connect(**DB_CONFIG)
-            cursor = connection.cursor()
-
-            threshold = datetime.now() - timedelta(minutes=7)
-            cursor.execute(
-                "SELECT id, expert_id, description FROM orders WHERE status = 'Ожидает исполнителя' AND created_at < %s",
-                (threshold,)
-            )
-            old_orders = cursor.fetchall()
-
-            for order_id, expert_id, description in old_orders:
-                if order_id not in sent_reminders:
-                    await send_reminder_to_ph(order_id, expert_id, description)
-                    sent_reminders[order_id] = True
-
-        except Exception as e:
-            logging.error(f"Ошибка проверки заявок: {e}")
-        finally:
-            cursor.close()
-            connection.close()
-
-
-async def send_reminder_to_ph(order_id, expert_id, description):
-    try:
-        connection = pymysql.connect(**DB_CONFIG)
-        cursor = connection.cursor()
-
-        cursor.execute("SELECT id, tg_id FROM users_ph")
-        performers = cursor.fetchall()
-
-        for ph_id, tg_id in performers:
-            try:
-                message_text = (
-                    f"⏰ *Внимание! Заявка ожидает исполнения уже более 7 минут!*\n\n"
-                    f"📄 Заявка #{order_id}\n"
-                    f"👤 Создатель: #клиент{expert_id}\n"
-                    f"Описание: {description}\n\n"
-                    "Пожалуйста, возьмите заявку в работу или откажитесь с указанием причины."
-                )
-
-                markup = InlineKeyboardMarkup(inline_keyboard=[[
-                    InlineKeyboardButton(text="Взять в работу", callback_data=f"take_order_{order_id}"),
-                    InlineKeyboardButton(text="Отказать", callback_data=f"retake_order_{order_id}")
-                ]])
-
-                await bot.send_message(tg_id, message_text, reply_markup=markup)
-
-            except Exception as e:
-                logging.error(f"Ошибка отправки исполнителю {ph_id}: {e}")
-
-    except Exception as e:
-        logging.error(f"Ошибка рассылки напоминаний: {e}")
-    finally:
-        cursor.close()
-        connection.close()
-
-
 @dp.message(F.text == "Моя статистика")
 async def show_ph_statistics(message: types.Message):
     ph_id = await get_ph_id(message.from_user.id)
@@ -1577,7 +1514,6 @@ async def cancel_revision(message: types.Message, state: FSMContext):
 
 async def main():
     ensure_invites_table()
-    asyncio.create_task(check_pending_orders())
     await dp.start_polling(bot)
 
 if __name__ == '__main__':
