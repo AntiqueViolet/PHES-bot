@@ -26,7 +26,9 @@ DB_CONFIG = {
     'host': os.getenv('DB_HOST'),
     'database': os.getenv('DB_NAME'),
     'user': os.getenv('DB_USER'),
-    'password': os.getenv('DB_PASSWORD')
+    'password': os.getenv('DB_PASSWORD'),
+    'charset': 'utf8mb4',
+    'init_command': "SET NAMES utf8mb4 COLLATE utf8mb4_general_ci",
 }
 
 API_TOKEN = os.getenv('API_TOKEN')
