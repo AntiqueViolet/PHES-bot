@@ -156,6 +156,24 @@ async def reset_state_handler(message: types.Message, state: FSMContext):
     await message.answer("✅ Состояние сброшено", reply_markup=kb)
 
 
+@dp.message(Command("menu"))
+async def cmd_menu(message: types.Message):
+    tg_id = message.from_user.id
+    if await get_ph_id(tg_id):
+        kb = ph_main_keyboard()
+    elif await get_expert_id(tg_id):
+        kb = expert_main_keyboard()
+    else:
+        kb = types.ReplyKeyboardMarkup(
+            keyboard=[
+                [types.KeyboardButton(text="🌛 Войти в систему")],
+                [types.KeyboardButton(text="🔑 У меня есть код приглашения")],
+            ],
+            resize_keyboard=True,
+        )
+    await message.answer("📋 Меню:", reply_markup=kb)
+
+
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     keyboard = types.ReplyKeyboardMarkup(
@@ -1613,6 +1631,10 @@ async def cancel_revision(message: types.Message, state: FSMContext):
 
 async def main():
     ensure_invites_table()
+    await bot.set_my_commands([
+        types.BotCommand(command="menu", description="Показать меню"),
+        types.BotCommand(command="start", description="Начало"),
+    ])
     await dp.start_polling(bot)
 
 if __name__ == '__main__':
