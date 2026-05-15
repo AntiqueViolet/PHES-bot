@@ -1,4 +1,5 @@
 import logging
+import re
 import secrets
 import string
 from aiogram import Bot, Dispatcher, types
@@ -517,6 +518,15 @@ async def finish_photos(message: types.Message, state: FSMContext):
     await save_order_data(message, state)
 
 
+def format_order_card(order_id, expert_id, description, status_line):
+    return (
+        f"📄 Заявка #{order_id}\n"
+        f"👤 Создатель: #клиент{expert_id}\n"
+        f"Описание: {description}\n"
+        f"Статус: {status_line}"
+    )
+
+
 async def save_order_data(message: types.Message, state: FSMContext):
     user_data = await state.get_data()
     expert_id = await get_expert_id(message.from_user.id)  # type: ignore
@@ -551,7 +561,7 @@ async def save_order_data(message: types.Message, state: FSMContext):
 
         connection.commit()
 
-        await send_order_to_ph(order_id, user_data['description'], user_data.get('photos', []))
+        await send_order_to_ph(order_id, expert_id, user_data['description'], user_data.get('photos', []))
 
         await message.answer("✅ Заявка успешно создана!", reply_markup=keyboard)
 
@@ -661,7 +671,7 @@ async def take_order(callback: types.CallbackQuery, state: FSMContext):
 
         for target_ph_id, message_id in all_messages:
             try:
-                new_text = f"📄 Заявка #{order_id}\nОписание: {description}\nСтатус: В работе у {ph_name}"
+                new_text = format_order_card(order_id, expert_id, description, f"В работе у {ph_name}")
 
                 await bot.edit_message_text(
                     chat_id=target_ph_id,
@@ -758,7 +768,7 @@ async def finish_photos_upload(message: types.Message, state: FSMContext):
 
         for target_ph_id, message_id in all_messages:
             try:
-                new_text = f"📄 Заявка #{order_id}\nОписание: {description}\nСтатус: Выполнена"
+                new_text = format_order_card(order_id, expert_id, description, "Выполнена")
                 await bot.edit_message_text(
                     chat_id=target_ph_id,
                     message_id=message_id,
@@ -804,7 +814,7 @@ async def finish_photos_upload(message: types.Message, state: FSMContext):
         await state.clear()
 
 
-async def send_order_to_ph(order_id, description, photos):
+async def send_order_to_ph(order_id, expert_id, description, photos):
     try:
         connection = pymysql.connect(**DB_CONFIG)  # type: ignore
         cursor = connection.cursor()
@@ -814,7 +824,12 @@ async def send_order_to_ph(order_id, description, photos):
 
         for ph_id, tg_id in performers:
             try:
-                message_text = f"📄 Новая заявка #{order_id}\nОписание: {description}\nСтатус: Ожидает исполнителя"
+                message_text = (
+                    f"📄 Новая заявка #{order_id}\n"
+                    f"👤 Создатель: #клиент{expert_id}\n"
+                    f"Описание: {description}\n"
+                    f"Статус: Ожидает исполнителя"
+                )
                 markup = InlineKeyboardMarkup(inline_keyboard=[[
                     InlineKeyboardButton(text="Взять в работу", callback_data=f"take_order_{order_id}"),
                     InlineKeyboardButton(text="Отказать", callback_data=f"retake_order_{order_id}")
@@ -1003,7 +1018,8 @@ async def generate_report2(message: types.Message):
 @dp.callback_query(lambda c: c.data == "yes")
 async def request_revision(callback: types.CallbackQuery, state: FSMContext):
     text = callback.message.text
-    order_id = int(text.split("#")[-1].split()[0]) if '#' in text else None
+    m = re.search(r"#(\d+)", text or "")
+    order_id = int(m.group(1)) if m else None
     print(order_id, text)
     if not order_id:
         await callback.answer("❌ Ошибка: не найден номер заявки")
@@ -1350,7 +1366,7 @@ async def process_decline_reason(message: types.Message, state: FSMContext):
 
         for target_ph_id, message_id in all_messages:
             try:
-                new_text = f"📄 Заявка #{order_id}\nОписание: {description}\nСтатус: Отклонена исполнителем"
+                new_text = format_order_card(order_id, expert_id, description, "Отклонена исполнителем")
                 await bot.edit_message_text(
                     chat_id=target_ph_id,
                     message_id=message_id,
@@ -1380,14 +1396,14 @@ async def check_pending_orders():
 
             threshold = datetime.now() - timedelta(minutes=7)
             cursor.execute(
-                "SELECT id, description FROM orders WHERE status = 'Ожидает исполнителя' AND created_at < %s",
+                "SELECT id, expert_id, description FROM orders WHERE status = 'Ожидает исполнителя' AND created_at < %s",
                 (threshold,)
             )
             old_orders = cursor.fetchall()
 
-            for order_id, description in old_orders:
+            for order_id, expert_id, description in old_orders:
                 if order_id not in sent_reminders:
-                    await send_reminder_to_ph(order_id, description)
+                    await send_reminder_to_ph(order_id, expert_id, description)
                     sent_reminders[order_id] = True
 
         except Exception as e:
@@ -1397,7 +1413,7 @@ async def check_pending_orders():
             connection.close()
 
 
-async def send_reminder_to_ph(order_id, description):
+async def send_reminder_to_ph(order_id, expert_id, description):
     try:
         connection = pymysql.connect(**DB_CONFIG)
         cursor = connection.cursor()
@@ -1410,6 +1426,7 @@ async def send_reminder_to_ph(order_id, description):
                 message_text = (
                     f"⏰ *Внимание! Заявка ожидает исполнения уже более 7 минут!*\n\n"
                     f"📄 Заявка #{order_id}\n"
+                    f"👤 Создатель: #клиент{expert_id}\n"
                     f"Описание: {description}\n\n"
                     "Пожалуйста, возьмите заявку в работу или откажитесь с указанием причины."
                 )
