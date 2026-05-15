@@ -1,4 +1,6 @@
 import logging
+import secrets
+import string
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.fsm.state import State, StatesGroup
@@ -60,6 +62,42 @@ class LoginStates(StatesGroup):
     password = State()
 
 
+class OtpStates(StatesGroup):
+    code = State()
+
+
+INVITES_TABLE_DDL = """
+CREATE TABLE IF NOT EXISTS expert_invites (
+    code        VARCHAR(16) PRIMARY KEY,
+    created_by  BIGINT       NOT NULL,
+    created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    used_by_tg  BIGINT       NULL,
+    used_at     TIMESTAMP    NULL
+)
+"""
+
+
+def generate_otp(length: int = 8) -> str:
+    alphabet = string.ascii_uppercase + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
+def is_admin(tg_id) -> bool:
+    sid = str(tg_id)
+    return sid == str(ADMIN_ID_1) or sid == str(ADMIN_ID_2)
+
+
+def ensure_invites_table() -> None:
+    try:
+        connection = pymysql.connect(**DB_CONFIG)
+        with connection.cursor() as cursor:
+            cursor.execute(INVITES_TABLE_DDL)
+            connection.commit()
+        connection.close()
+    except Exception as e:
+        logging.error(f"Не удалось создать таблицу expert_invites: {e}")
+
+
 class RevisionStates(StatesGroup):
     revision_comment = State()
     revision_photos = State()
@@ -74,7 +112,8 @@ class DeclineOrderStates(StatesGroup):
 async def cmd_start(message: types.Message):
     keyboard = types.ReplyKeyboardMarkup(
         keyboard=[
-            [types.KeyboardButton(text="🌛 Войти в систему")]
+            [types.KeyboardButton(text="🌛 Войти в систему")],
+            [types.KeyboardButton(text="🔑 У меня есть код приглашения")],
         ],
         resize_keyboard=True
     )
@@ -249,6 +288,177 @@ async def process_password_input(message: types.Message, state: FSMContext):
         cursor.close()
         connection.close()
         await state.clear()
+
+
+@dp.message(F.text == "🔑 У меня есть код приглашения")
+async def otp_start(message: types.Message, state: FSMContext):
+    await state.set_state(OtpStates.code)
+    await message.answer(
+        "Введите одноразовый код приглашения:",
+        reply_markup=types.ReplyKeyboardRemove(),
+    )
+
+
+@dp.message(OtpStates.code)
+async def otp_process(message: types.Message, state: FSMContext):
+    code = (message.text or "").strip().upper()
+    tg_id = message.from_user.id
+    connection = None
+    try:
+        connection = pymysql.connect(**DB_CONFIG)
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT id FROM users_expert WHERE tg_id = %s",
+                (tg_id,),
+            )
+            if cursor.fetchone():
+                await message.answer("Вы уже зарегистрированы как эксперт.")
+                await state.clear()
+                return
+
+            cursor.execute(
+                "SELECT code FROM expert_invites WHERE code = %s AND used_by_tg IS NULL",
+                (code,),
+            )
+            if not cursor.fetchone():
+                await message.answer("❌ Код недействителен или уже использован.")
+                await state.clear()
+                return
+
+            name = (message.from_user.first_name or "Эксперт")[:64]
+            surname = (message.from_user.last_name or "")[:64]
+            login = f"tg_{tg_id}"
+
+            cursor.execute(
+                """INSERT INTO users_expert (tg_id, name, surname, login, password, banned)
+                   VALUES (%s, %s, %s, %s, %s, 0)""",
+                (tg_id, name, surname, login, ""),
+            )
+            cursor.execute(
+                """UPDATE expert_invites
+                   SET used_by_tg = %s, used_at = NOW()
+                   WHERE code = %s""",
+                (tg_id, code),
+            )
+            connection.commit()
+
+        keyboard = types.ReplyKeyboardMarkup(
+            keyboard=[
+                [types.KeyboardButton(text="Создать заявку")],
+                [types.KeyboardButton(text="Удалить заявку")],
+            ],
+            resize_keyboard=True,
+        )
+        await message.answer(
+            f"✅ Готово! Добро пожаловать, {name}!",
+            reply_markup=keyboard,
+        )
+    except Exception as e:
+        logging.error(f"Ошибка OTP-регистрации: {e}")
+        await message.answer("⚠️ Произошла ошибка. Попробуйте позже.")
+    finally:
+        try:
+            if connection is not None:
+                connection.close()
+        except Exception:
+            pass
+        await state.clear()
+
+
+@dp.message(Command("invite"))
+async def cmd_invite(message: types.Message):
+    if not is_admin(message.from_user.id):
+        return
+    code = generate_otp(8)
+    connection = None
+    try:
+        connection = pymysql.connect(**DB_CONFIG)
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO expert_invites (code, created_by) VALUES (%s, %s)",
+                (code, message.from_user.id),
+            )
+            connection.commit()
+        await message.answer(
+            f"🔑 Код приглашения для нового эксперта:\n\n`{code}`\n\n"
+            "Перешлите его новому эксперту. Код одноразовый.",
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+        logging.error(f"Ошибка /invite: {e}")
+        await message.answer("⚠️ Не удалось создать код.")
+    finally:
+        try:
+            if connection is not None:
+                connection.close()
+        except Exception:
+            pass
+
+
+@dp.message(Command("invites"))
+async def cmd_invites(message: types.Message):
+    if not is_admin(message.from_user.id):
+        return
+    connection = None
+    try:
+        connection = pymysql.connect(**DB_CONFIG)
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT code, created_at FROM expert_invites "
+                "WHERE used_by_tg IS NULL ORDER BY created_at DESC"
+            )
+            rows = cursor.fetchall()
+        if not rows:
+            await message.answer("Активных кодов нет.")
+            return
+        lines = [f"`{code}` — {created_at}" for code, created_at in rows]
+        await message.answer(
+            "Активные коды:\n" + "\n".join(lines),
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+        logging.error(f"Ошибка /invites: {e}")
+        await message.answer("⚠️ Не удалось получить список.")
+    finally:
+        try:
+            if connection is not None:
+                connection.close()
+        except Exception:
+            pass
+
+
+@dp.message(Command("revoke"))
+async def cmd_revoke(message: types.Message):
+    if not is_admin(message.from_user.id):
+        return
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer("Использование: /revoke <код>")
+        return
+    code = parts[1].strip().upper()
+    connection = None
+    try:
+        connection = pymysql.connect(**DB_CONFIG)
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM expert_invites WHERE code = %s AND used_by_tg IS NULL",
+                (code,),
+            )
+            deleted = cursor.rowcount
+            connection.commit()
+        if deleted:
+            await message.answer(f"✅ Код `{code}` удалён.", parse_mode="Markdown")
+        else:
+            await message.answer("Код не найден или уже использован.")
+    except Exception as e:
+        logging.error(f"Ошибка /revoke: {e}")
+        await message.answer("⚠️ Не удалось удалить код.")
+    finally:
+        try:
+            if connection is not None:
+                connection.close()
+        except Exception:
+            pass
 
 
 @dp.message(F.text == "Создать заявку")
@@ -1349,6 +1559,7 @@ async def cancel_revision(message: types.Message, state: FSMContext):
         await state.clear()
 
 async def main():
+    ensure_invites_table()
     asyncio.create_task(check_pending_orders())
     await dp.start_polling(bot)
 
