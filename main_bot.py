@@ -109,6 +109,53 @@ class DeclineOrderStates(StatesGroup):
     reason = State()
 
 
+class RevisionReplyStates(StatesGroup):
+    text = State()
+
+
+RESET_BTN = "🔄 Сброс"
+
+
+def ph_main_keyboard() -> types.ReplyKeyboardMarkup:
+    return types.ReplyKeyboardMarkup(
+        keyboard=[
+            [types.KeyboardButton(text="Моя статистика")],
+            [types.KeyboardButton(text=RESET_BTN)],
+        ],
+        resize_keyboard=True,
+    )
+
+
+def expert_main_keyboard() -> types.ReplyKeyboardMarkup:
+    return types.ReplyKeyboardMarkup(
+        keyboard=[
+            [types.KeyboardButton(text="Создать заявку")],
+            [types.KeyboardButton(text="Удалить заявку")],
+            [types.KeyboardButton(text=RESET_BTN)],
+        ],
+        resize_keyboard=True,
+    )
+
+
+@dp.message(F.text == RESET_BTN)
+async def reset_state_handler(message: types.Message, state: FSMContext):
+    await state.clear()
+    tg_id = message.from_user.id
+    if await get_ph_id(tg_id):
+        kb = ph_main_keyboard()
+    elif await get_expert_id(tg_id):
+        kb = expert_main_keyboard()
+    else:
+        kb = types.ReplyKeyboardMarkup(
+            keyboard=[
+                [types.KeyboardButton(text="🌛 Войти в систему")],
+                [types.KeyboardButton(text="🔑 У меня есть код приглашения")],
+            ],
+            resize_keyboard=True,
+        )
+    await message.answer("✅ Состояние сброшено", reply_markup=kb)
+
+
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     keyboard = types.ReplyKeyboardMarkup(
@@ -259,14 +306,10 @@ async def process_password_input(message: types.Message, state: FSMContext):
         )
         expert = cursor.fetchone()
         if expert:
-            keyboard = types.ReplyKeyboardMarkup(
-                keyboard=[
-                    [types.KeyboardButton(text="Создать заявку")],
-                    [types.KeyboardButton(text="Удалить заявку")]
-                ],
-                resize_keyboard=True
+            await message.answer(
+                f"Добро пожаловать, {expert[0]} {expert[1]}!",
+                reply_markup=expert_main_keyboard(),
             )
-            await message.answer(f"Добро пожаловать, {expert[0]} {expert[1]}!", reply_markup=keyboard)
             await state.clear()
             return
 
@@ -276,7 +319,10 @@ async def process_password_input(message: types.Message, state: FSMContext):
         )
         ph = cursor.fetchone()
         if ph:
-            await message.answer(f"Добро пожаловать, {ph[0]}!")
+            await message.answer(
+                f"Добро пожаловать, {ph[0]}!",
+                reply_markup=ph_main_keyboard(),
+            )
             await state.clear()
             return
 
@@ -343,16 +389,9 @@ async def otp_process(message: types.Message, state: FSMContext):
             )
             connection.commit()
 
-        keyboard = types.ReplyKeyboardMarkup(
-            keyboard=[
-                [types.KeyboardButton(text="Создать заявку")],
-                [types.KeyboardButton(text="Удалить заявку")],
-            ],
-            resize_keyboard=True,
-        )
         await message.answer(
             f"✅ Готово! Добро пожаловать, {name}!",
-            reply_markup=keyboard,
+            reply_markup=expert_main_keyboard(),
         )
     except Exception as e:
         logging.error(f"Ошибка OTP-регистрации: {e}")
@@ -531,13 +570,7 @@ async def save_order_data(message: types.Message, state: FSMContext):
     user_data = await state.get_data()
     expert_id = await get_expert_id(message.from_user.id)  # type: ignore
 
-    keyboard = types.ReplyKeyboardMarkup(
-        keyboard=[
-            [types.KeyboardButton(text="Создать заявку")],
-            [types.KeyboardButton(text="Удалить заявку")]
-        ],
-        resize_keyboard=True
-    )
+    keyboard = expert_main_keyboard()
 
     try:
         connection = pymysql.connect(**DB_CONFIG)  # type: ignore
@@ -1071,15 +1104,20 @@ async def process_revision_comment(message: types.Message, state: FSMContext):
         connection.commit()
 
         builder = InlineKeyboardBuilder()
-        builder.add(InlineKeyboardButton(
+        builder.row(InlineKeyboardButton(
             text="Отправить фото доработки",
             callback_data=f"activate_revision_{order_id}"
+        ))
+        builder.row(InlineKeyboardButton(
+            text="💬 Ответить эксперту",
+            callback_data=f"reply_expert_{order_id}"
         ))
 
         await bot.send_message(
             ph_tg_id,
             f"📝 Получен комментарий по заявке #{order_id}:\n\n{comment}\n\n"
-            "Нажмите кнопку ниже, чтобы начать отправку фотографий с исправлениями:",
+            "Нажмите кнопку ниже, чтобы начать отправку фотографий с исправлениями, "
+            "или ответьте эксперту текстом:",
             reply_markup=builder.as_markup()
         )
 
@@ -1288,6 +1326,65 @@ async def activate_revision_state(callback: types.CallbackQuery, state: FSMConte
         await callback.answer("❌ Ошибка активации", show_alert=True)
     finally:
         connection.close()
+
+
+@ph_router.callback_query(lambda c: c.data.startswith("reply_expert_"))
+async def start_reply_to_expert(callback: types.CallbackQuery, state: FSMContext):
+    order_id = int(callback.data.split("_")[-1])
+
+    ph_id = await get_ph_id(callback.from_user.id)
+    if not ph_id:
+        await callback.answer("❌ Вы не зарегистрированы как исполнитель", show_alert=True)
+        return
+
+    await state.set_state(RevisionReplyStates.text)
+    await state.update_data(order_id=order_id)
+    await callback.message.answer(
+        f"💬 Введите текст ответа эксперту по заявке #{order_id}:",
+    )
+    await callback.answer()
+
+
+@ph_router.message(RevisionReplyStates.text)
+async def send_reply_to_expert(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    order_id = data.get('order_id')
+    reply_text = (message.text or "").strip()
+
+    if not reply_text:
+        await message.answer("❌ Пустой ответ. Введите текст или нажмите 🔄 Сброс.")
+        return
+
+    try:
+        connection = pymysql.connect(**DB_CONFIG)
+        cursor = connection.cursor()
+        cursor.execute(
+            "SELECT ue.tg_id FROM orders o JOIN users_expert ue ON ue.id = o.expert_id WHERE o.id = %s",
+            (order_id,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            await message.answer("❌ Не нашёл эксперта по заявке")
+            await state.clear()
+            return
+        expert_tg_id = row[0]
+
+        await bot.send_message(
+            expert_tg_id,
+            f"💬 Ответ исполнителя по заявке #{order_id}:\n\n{reply_text}",
+        )
+        await message.answer("✅ Ответ отправлен эксперту")
+
+    except Exception as e:
+        logging.error(f"Ошибка отправки ответа эксперту: {e}", exc_info=True)
+        await message.answer("⚠️ Не удалось отправить ответ")
+    finally:
+        try:
+            cursor.close()
+            connection.close()
+        except Exception:
+            pass
+        await state.clear()
 
 
 @ph_router.callback_query(lambda c: c.data.startswith("retake_order_"))
